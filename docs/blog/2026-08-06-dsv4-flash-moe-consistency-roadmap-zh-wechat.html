@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RL Kernel进阶计划：DeepSeek V4 Flash MoE 算子级训推一致性</title>
+</head>
+<body style="margin:0;background:#f4f7fb;">
+  <main style="box-sizing:border-box;width:100%;max-width:780px;margin:0 auto;padding:26px 14px 48px;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;overflow-x:hidden;">
+    <section style="margin:0 0 22px;padding:22px 18px;background:#f8fbff;border:1px solid #dbeafe;border-radius:12px;">
+      <p style="margin:0 0 8px;color:#2563eb;font-size:13px;line-height:1.6;font-weight:760;letter-spacing:0;">RL-Kernel</p>
+      <h1 style="margin:0;color:#0f172a;font-size:24px;line-height:1.38;font-weight:820;letter-spacing:0;overflow-wrap:anywhere;">RL Kernel进阶计划：DeepSeek V4 Flash MoE 算子级训推一致性</h1>
+      <p style="margin:12px 0 0;color:#526178;font-size:14px;line-height:1.75;">面向 DeepSeek-V4-Flash 的 operator-level 训推一致计划</p>
+    </section>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">我们正在开发 Qwen3 Dense 模型的算子级别训推一致性工作，并严格沿用 RL-Kernel #83 里的 WS1 -&gt; WS2 拆分方式。接下来，我们准备把这套方法推进到 <span style="font-family:Menlo,Consolas,monospace;color:#1f2937;font-size:.95em;">DeepSeek-V4-Flash-0731</span> 这样的 Flash MoE 模型上。</p>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">晚点我们会公布关于 v4 的详细 Roadmap，届时会放到 RL-Kernel issue 中。</p>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">在 Dense 模型里，我们更多面对的是 matmul、attention、logprob 这类连续数值路径；到了 MoE，问题会变得更离散：router 只要有一点数值差异，top-k expert 就可能变；dispatch 只要 token 顺序、padding 或 all2all layout 不同，后面的 expert 输入就不再是同一个张量；最后 weighted combine 的浮点归约顺序只要变化，<span style="font-family:Menlo,Consolas,monospace;color:#1f2937;font-size:.95em;">dlogp</span> 就可能随 batch、pack、TP、CP、EP 配置漂移。</p>
+
+    <figure style="margin:22px 0;text-align:center;">
+      <img src="../assets/blog/dsv4-moe-consistency-risk-map.png" alt="DSV4 Flash MoE train-inference drift surfaces" style="display:block;width:100%;max-width:760px;margin:0 auto;border-radius:6px;">
+      <figcaption style="margin-top:8px;color:#667085;font-size:13px;line-height:1.6;">DSV4 Flash MoE 的主要漂移面：routing、fused materialization、final reduction，以及它们上方的 batch / pack / padding / EP / TP / CP provenance。</figcaption>
+    </figure>
+
+    <h2 style="margin:32px 0 14px;padding-left:12px;border-left:4px solid #2563eb;color:#0f172a;font-size:22px;line-height:1.45;font-weight:800;letter-spacing:0;">为什么更容易漂</h2>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">公开示例显示，推理侧会把 expert parallel、低精度 cache、分块 prefill、混合 attention、投机解码等工程路径放进同一个执行图里。这说明推理侧不是一个朴素 PyTorch graph，而是一个高度工程化、融合化、并行化的执行图。</p>
+
+    <section style="margin:14px 0;padding:14px 15px;background:#f8fbff;border:1px solid #dbeafe;border-radius:8px;">
+      <p style="margin:0;color:#172033;font-size:15.5px;line-height:1.75;"><strong>边界</strong>：训练侧 Megatron；推理侧 vLLM；硬件 NVIDIA Hopper；一致性口径沿用 RL-Kernel #83 / #108，bitwise 优先，否则 tight numerical tolerance；覆盖 forward + backward、deterministic reduction order、batch-invariance、padding 和并行配置。投机解码暂不作为第一阶段训推一致主线，只记录它对推理 control flow 的影响。</p>
+    </section>
+
+    <h2 style="margin:32px 0 14px;padding-left:12px;border-left:4px solid #2563eb;color:#0f172a;font-size:22px;line-height:1.45;font-weight:800;letter-spacing:0;">问题一：routing 是离散决策</h2>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">MoE router 会从 hidden state 算出 router logits，再选择 top-k experts。这里的差别并不只是最后一位不一样：如果两个 expert 的 score 很接近，训练侧和推理侧只要在 accumulation dtype、tie-breaking、expert bias、hash routing 或 padding 处理上有一点差别，最终选择的 expert 就可能不同。</p>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">一旦 expert id 不同，后面就不是同一个 MLP 在算同一个 token。这个漂移会从连续数值误差变成离散路径分叉。Roadmap 的处理方式是先在 WS1 里记录并对齐 router logits、top-k ids、top-k weights、tie-breaking 规则和 routing metadata。</p>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">这里会特别关注 router softmax 和 top-k。不同实现路径可以是 CUDA，也可以是 Triton 或其他 backend，但公开 Roadmap 只强调一件事：先做精度对齐和稳定性测试，再决定是否进入 fast path。</p>
+
+    <h2 style="margin:32px 0 14px;padding-left:12px;border-left:4px solid #2563eb;color:#0f172a;font-size:22px;line-height:1.45;font-weight:800;letter-spacing:0;">问题二：单算子边界可能没有意义</h2>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">朴素理解里，MoE 可以拆成 <span style="font-family:Menlo,Consolas,monospace;color:#1f2937;font-size:.95em;">gatter/gather -&gt; gate_and_up -&gt; down -&gt; scatter</span>。但这套拆法不一定对应真实推理执行边界。</p>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">vLLM 很可能走 <span style="font-family:Menlo,Consolas,monospace;color:#1f2937;font-size:.95em;">fused_moe</span> 这一类融合路径，把 MoE 路径组织成几个语义阶段：准备、专家计算、加权归并。prepare 里可能包含 activation quantization 和 dispatch；experts 里可能包含 permute、专家 MLP、unpermute 和 workspace；归并则可能落在末端阶段。</p>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">训练侧也不能默认一样。Megatron 可能保留更显式的 router、dispatch、expert MLP、combine 边界，也可能在某些路径里使用 grouped GEMM、activation packing 或通信 overlap。训练侧 materialization 和推理侧 fused materialization 都需要调研，不能把任意一边的 kernel 边界当成天然合同。</p>
+
+    <figure style="margin:22px 0;text-align:center;">
+      <img src="../assets/blog/dsv4-moe-fused-boundaries.png" alt="DSV4 MoE fused semantic boundaries" style="display:block;width:100%;max-width:760px;margin:0 auto;border-radius:6px;">
+      <figcaption style="margin-top:8px;color:#667085;font-size:13px;line-height:1.6;">不能把 gatter/gather / gate_and_up / down / scatter 当成天然验收单元；Roadmap 需要围绕语义边界做一致性检查。</figcaption>
+    </figure>
+
+    <section style="margin:12px 0;padding:13px 14px;background:#f8fbff;border:1px solid #dbeafe;border-radius:8px;">
+      <p style="margin:0 0 6px;color:#172033;font-size:15.5px;line-height:1.65;font-weight:760;">真正要比较的边界</p>
+      <p style="margin:0;color:#374151;font-size:14.5px;line-height:1.78;">routing boundary、dispatch boundary、expert boundary、shared-expert boundary、reduction boundary。vLLM backend 是 candidate backend；RL-Kernel reference path、semantic trace 和 deterministic comparison 才是合同真源。</p>
+    </section>
+
+    <h2 style="margin:32px 0 14px;padding-left:12px;border-left:4px solid #2563eb;color:#0f172a;font-size:22px;line-height:1.45;font-weight:800;letter-spacing:0;">问题三：final reduction 是核心漂移点</h2>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">DSV4 MoE 里最值得盯住的位置，是 weighted expert combine。多个 expert output 乘以 top-k weights 后要合并回 token hidden state，这里就是 MoE 的最终浮点归约点。</p>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">往下看，它依赖 expert MLP 的 matmul accumulation、activation、low precision scale、downcast；往上看，它会受到 batch、pack、padding、EP all2all、TP shard、CP boundary、collective scheduling 的影响。很多表面上像 batch 不一致或 padding 不一致的问题，最后都会在这个 reduction 点上表现成数值漂移。</p>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">共享专家、反向传播和低精度路径也会放在同一个视角下看：优先打开或复用已有的确定性开关，优先评估成熟 backend；如果某些 kernel-level 展开、调度或融合选择会改变归约顺序，就只把它作为实现风险记录，不在模型语义层面引入新的解释。</p>
+
+    <h2 style="margin:32px 0 14px;padding-left:12px;border-left:4px solid #2563eb;color:#0f172a;font-size:22px;line-height:1.45;font-weight:800;letter-spacing:0;">问题四：Attention 会污染 MoE</h2>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">DSV4 Flash 不是只有 MoE。推理侧还可能有 SWA、HCA / CSA、chunked prefill、FP8 KV cache、FP4 indexer cache、以及面向长上下文的压缩或混合 attention 路径。用户最终看到的是 MoE 漂移，但真正的输入差异可能已经在 attention block 里发生了。</p>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">所以 attention boundary 要进入 P0，HCA / CSA 等名称不会直接等价成验收算子，仍然要看真实实现边界。WS1 先保证进入 MoE 前的 hidden-state boundary 可记录、可对齐；如果 attention 纳入 full-chain，就必须区分 attention-induced drift 和 MoE-induced drift。</p>
+
+    <h2 style="margin:32px 0 14px;padding-left:12px;border-left:4px solid #2563eb;color:#0f172a;font-size:22px;line-height:1.45;font-weight:800;letter-spacing:0;">问题五：RL 最终感知的是 dlogp</h2>
+
+    <section style="display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:16px 0;padding:13px 15px;background:#f7f9fc;border:1px solid #d9e2ec;border-radius:8px;">
+      <p style="margin:0;color:#1f2937;font-family:Menlo,Consolas,monospace;font-size:12.8px;line-height:1.68;white-space:nowrap;">dlogp = training_recomputed_logp - rollout_old_logp</p>
+    </section>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">MoE routing、expert combine、attention cache、TP vocab-parallel logprob、padding mask、action mask 都可能最后汇到 <span style="font-family:Menlo,Consolas,monospace;color:#1f2937;font-size:.95em;">dlogp</span>。如果只看单个算子误差，而不看 active response/action tokens 上的 <span style="font-family:Menlo,Consolas,monospace;color:#1f2937;font-size:.95em;">dlogp</span>，就可能错过真正影响 PPO / GRPO 更新的漂移。</p>
+
+    <h2 style="margin:32px 0 14px;padding-left:12px;border-left:4px solid #2563eb;color:#0f172a;font-size:22px;line-height:1.45;font-weight:800;letter-spacing:0;">R3 不作为前提</h2>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">R3 routing replay 很有用，但不把它作为 DSV4 MoE 训推一致 Roadmap 的前提。R3 可以 replay rollout 侧 routed experts，减少一类很大的 routing mismatch；但如果 Roadmap 依赖 R3 才成立，我们就无法判断 Megatron router 和 vLLM router 本身是否语义一致。</p>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">R3 应该是 audit / noise reduction / provenance 工具，而不是 MoE semantic contract 的真源。如果启用，必须写入 provenance；如果没有启用，同一份 MoE contract 仍然要能独立验收。</p>
+
+    <h2 style="margin:32px 0 14px;padding-left:12px;border-left:4px solid #2563eb;color:#0f172a;font-size:22px;line-height:1.45;font-weight:800;letter-spacing:0;">RL-Kernel 的 WS1 -&gt; WS2</h2>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">我们已经找到了 DSV4 Flash MoE 在 RL-Kernel 框架里的拆解方式：不是为 DSV4 新建一套独立数值标准，而是沿用 Dense 模型里已经形成的 WS1 -&gt; WS2 设计理念。</p>
+
+    <figure style="margin:22px 0;text-align:center;">
+      <img src="../assets/blog/dsv4-moe-ws-roadmap.png" alt="RL-Kernel DSV4 Flash MoE WS1 WS2 Roadmap" style="display:block;width:100%;max-width:760px;margin:0 auto;border-radius:6px;">
+      <figcaption style="margin-top:8px;color:#667085;font-size:13px;line-height:1.6;">DSV4 Flash MoE 的一致性路线：WS1 解决单卡语义边界，WS2 解决 EP / TP / CP 与 cross-config dlogp。</figcaption>
+    </figure>
+
+    <section style="margin:12px 0;padding:13px 14px;background:#f8fbff;border:1px solid #dbeafe;border-radius:8px;">
+      <p style="margin:0 0 6px;color:#172033;font-size:15.5px;line-height:1.65;font-weight:760;">WS1：单 GPU / 语义算子层</p>
+      <p style="margin:0;color:#374151;font-size:14.5px;line-height:1.78;">扩展 ground-truth harness，记录 ModelProfile、LayerContract、SemanticTrace；做 MoE semantic boundary sweep；最后跑 single-GPU full-chain forward + backward + dlogp。</p>
+    </section>
+
+    <section style="margin:12px 0;padding:13px 14px;background:#f8fbff;border:1px solid #dbeafe;border-radius:8px;">
+      <p style="margin:0 0 6px;color:#172033;font-size:15.5px;line-height:1.65;font-weight:760;">WS2：多 GPU / 分布式一致性</p>
+      <p style="margin:0;color:#374151;font-size:14.5px;line-height:1.78;">把 TP、CP、EP、DP、batch、pack、padding、collective order 写进合同；做 deterministic collectives 和 Megatron vs vLLM 的 cross-config dlogp 对齐。EP 更容易暴露 routing / dispatch 问题；TP、DP 和 CP 更容易把 MoE block、logprob、communication overlap 混在一起。具体怎么改 backend、怎么包现有 kernel，不在这里展开。</p>
+    </section>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">实验矩阵只用来隔离实现差异，不把模型架构层面的新语义引入对比本身。</p>
+
+    <section style="margin:20px 0 22px;">
+      <p style="margin:0 0 8px;color:#475467;font-size:13px;line-height:1.6;">后续 Issues 拆分</p>
+      <section style="display:block;width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px;">
+        <table style="border-collapse:collapse;width:980px;min-width:980px;font-size:13px;line-height:1.55;">
+          <thead>
+            <tr>
+              <th style="border:1px solid #d9e2ec;padding:10px 12px;background:#eef4ff;color:#172033;font-weight:700;text-align:left;white-space:nowrap;">Issue</th>
+              <th style="border:1px solid #d9e2ec;padding:10px 12px;background:#eef4ff;color:#172033;font-weight:700;text-align:left;white-space:nowrap;">重点问题</th>
+              <th style="border:1px solid #d9e2ec;padding:10px 12px;background:#eef4ff;color:#172033;font-weight:700;text-align:left;white-space:nowrap;">验收口径</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;white-space:nowrap;">DSV4-WS1-0</td><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;">ModelProfile + SemanticTrace</td><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;">同 checkpoint / tokens / mask / seed；fail closed</td></tr>
+            <tr><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;white-space:nowrap;">DSV4-WS1-1</td><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;">MoE semantic boundary sweep</td><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;">routing / dispatch / combine 在 batch 和 padding sweep 中对齐</td></tr>
+            <tr><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;white-space:nowrap;">DSV4-WS1-2</td><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;">single-GPU full-chain</td><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;">forward + backward；报告 drift percentiles 和 dlogp</td></tr>
+            <tr><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;white-space:nowrap;">DSV4-WS2-0</td><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;">EP / TP / CP provenance</td><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;">支持布局下对齐；per-rank drift 必须报告</td></tr>
+            <tr><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;white-space:nowrap;">DSV4-WS2-1</td><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;">deterministic collectives</td><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;">不支持的 collective / topology 组合 fail closed</td></tr>
+            <tr><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;white-space:nowrap;">DSV4-WS2-2</td><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;">cross-config dlogp</td><td style="border:1px solid #d9e2ec;padding:10px 12px;color:#25324a;vertical-align:top;">active tokens 上对齐；报告 RL 健康指标</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </section>
+
+    <h2 style="margin:32px 0 14px;padding-left:12px;border-left:4px solid #2563eb;color:#0f172a;font-size:22px;line-height:1.45;font-weight:800;letter-spacing:0;">加入我们</h2>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">DSV4 Flash MoE 训推一致不是一个单点 kernel 任务，它横跨 Megatron、vLLM、MoE routing、expert parallel、Hopper kernel、低精度数值和 RL logprob 诊断。我们接下来会围绕上述 WS1 / WS2 issues 推进开发。</p>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">如果你熟悉 CUDA / Triton / Hopper、vLLM fused MoE、Megatron MoE、分布式通信、或者 RL post-training 里的 logprob / KL / ratio 诊断，欢迎加入 DSV4 MoE 训推一致的开发工作。我们希望把这件事做成可复用的 operator-level infrastructure。如果要加入 MoE 的开发，可通过以下方式联系：官方邮箱 <a href="mailto:team@rl-align.org" style="color:#2563eb;text-decoration:none;overflow-wrap:anywhere;">team@rl-align.org</a>；发起人邮箱 <a href="mailto:vensenmu@gmail.com" style="color:#2563eb;text-decoration:none;overflow-wrap:anywhere;">vensenmu@gmail.com</a>；微信 <span style="font-family:Menlo,Consolas,monospace;color:#1f2937;font-size:.95em;">iZzy07Zoey12</span>。</p>
+
+    <h2 style="margin:32px 0 14px;padding-left:12px;border-left:4px solid #2563eb;color:#0f172a;font-size:22px;line-height:1.45;font-weight:800;letter-spacing:0;">致谢</h2>
+
+    <p style="margin:14px 0;color:#25324a;font-size:16px;line-height:1.86;overflow-wrap:anywhere;">感谢 Embedded LLM, Chutian Wang, Jiajie Li, Siru He, Xiaosong Ma, Kaijie Lin, Jian Zhang, Bosong Yang, Yunxiang Cai, Huihong Lu, Zhewei Liu, Zhengtao Chen 和 Ziying Tao, Zhipeng Wang, Vensen Mu 在 Dense 模型算子级训推一致工作中的付出，以及对 DSV4 MoE 调研的支持和贡献。</p>
+  </main>
+</body>
+</html>

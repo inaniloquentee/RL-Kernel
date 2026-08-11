@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1120" role="img" aria-labelledby="title desc">
+  <title id="title">Minimal RL-Kernel Integration Architecture</title>
+  <desc id="desc">A layered architecture diagram showing upstream RL frameworks importing RL-Kernel semantics through a narrow adapter boundary.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="6" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#315f9f"/>
+    </marker>
+    <style>
+      .canvas { fill: #ffffff; }
+      .browser { fill: #f1f3f7; }
+      .muted { fill: #e1e5ec; }
+      .title { font: 700 30px "Segoe UI", Arial, sans-serif; fill: #303641; }
+      .domain-title { font: 700 18px "Segoe UI", Arial, sans-serif; fill: #ff7474; }
+      .layer-label { font: 700 22px "Segoe UI", Arial, sans-serif; fill: #283241; }
+      .box-title { font: 700 17px "Segoe UI", Arial, sans-serif; fill: #283241; }
+      .box-sub { font: 500 13px "Segoe UI", Arial, sans-serif; fill: #455064; }
+      .white-box { fill: #ffffff; stroke: #27364d; stroke-width: 2; }
+      .user-box { fill: #6f8fc7; stroke: #26364d; stroke-width: 2; }
+      .runtime-box { fill: #4f83df; stroke: #244d91; stroke-width: 2; }
+      .adapter-shell { fill: #dfe5ff; stroke: #657399; stroke-width: 2; }
+      .kernel-domain { fill: #e9f6ec; stroke: #31b98d; stroke-width: 2; }
+      .kernel-box { fill: #ffffff; stroke: #31b98d; stroke-width: 2; }
+      .infra-shell { fill: #e5f2ff; stroke: #7aa5d6; stroke-width: 2; }
+      .rail { fill: #a8c6f2; stroke: #2e4b79; stroke-width: 2; }
+      .outer-frame { fill: none; stroke: #5b6571; stroke-width: 2; stroke-dasharray: 7 6; }
+      .row-sep { stroke: #9aa8bc; stroke-width: 2; stroke-dasharray: 8 8; }
+      .arrow { stroke: #315f9f; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .small { font: 600 13px "Segoe UI", Arial, sans-serif; fill: #303641; }
+      .white-text { fill: #ffffff; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1120" rx="36" fill="#9ebff0"/>
+  <rect x="28" y="28" width="1544" height="1064" rx="26" class="canvas"/>
+  <rect x="56" y="52" width="1488" height="84" rx="18" class="browser"/>
+  <rect x="84" y="74" width="138" height="12" rx="2" class="muted"/>
+  <rect x="84" y="100" width="94" height="12" rx="2" class="muted"/>
+  <rect x="690" y="74" width="34" height="34" rx="10" class="muted"/>
+  <rect x="742" y="74" width="34" height="34" rx="10" class="muted"/>
+  <rect x="794" y="74" width="34" height="34" rx="10" class="muted"/>
+  <circle cx="1320" cy="91" r="18" class="muted"/>
+  <circle cx="1348" cy="91" r="18" class="muted"/>
+  <circle cx="1376" cy="91" r="18" class="muted"/>
+  <rect x="1468" y="72" width="88" height="36" rx="9" class="muted"/>
+
+  <text x="800" y="192" text-anchor="middle" class="title">Minimal RL-Kernel Integration Architecture</text>
+
+  <rect x="108" y="226" width="1284" height="565" class="outer-frame"/>
+  <text x="132" y="244" class="domain-title">Upstream RL Framework Integration Domain (External)</text>
+
+  <text x="232" y="326" text-anchor="end" class="layer-label">User Layer</text>
+  <text x="232" y="444" text-anchor="end" class="layer-label">Framework Control</text>
+  <text x="232" y="562" text-anchor="end" class="layer-label">Framework Runtime</text>
+  <text x="232" y="686" text-anchor="end" class="layer-label">RL-Kernel Adapter</text>
+  <text x="232" y="890" text-anchor="end" class="layer-label">RL-Kernel Core</text>
+  <text x="232" y="1030" text-anchor="end" class="layer-label">Runtime Infra</text>
+
+  <rect x="296" y="286" width="60" height="487" rx="6" class="rail"/>
+  <text x="326" y="560" text-anchor="middle" transform="rotate(-90 326 560)" class="layer-label">Consistency Guardrail</text>
+
+  <rect x="1304" y="286" width="60" height="487" rx="6" class="rail"/>
+  <text x="1334" y="560" text-anchor="middle" transform="rotate(-90 1334 560)" class="layer-label">Observability Rail</text>
+
+  <line x1="230" y1="365" x2="1392" y2="365" class="row-sep"/>
+  <line x1="230" y1="477" x2="1392" y2="477" class="row-sep"/>
+  <line x1="230" y1="611" x2="1392" y2="611" class="row-sep"/>
+  <line x1="230" y1="742" x2="1392" y2="742" class="row-sep"/>
+  <line x1="230" y1="966" x2="1392" y2="966" class="row-sep"/>
+
+  <rect x="384" y="254" width="892" height="94" rx="5" class="user-box"/>
+  <text x="408" y="294" class="box-title white-text">User Controls</text>
+  <rect x="545" y="276" width="206" height="52" rx="2" class="white-box"/>
+  <text x="648" y="301" text-anchor="middle" class="box-title">CLI flags</text>
+  <text x="648" y="322" text-anchor="middle" class="box-sub">strict, fallback, audit</text>
+  <rect x="776" y="276" width="206" height="52" rx="2" class="white-box"/>
+  <text x="879" y="301" text-anchor="middle" class="box-title">Env aliases</text>
+  <text x="879" y="322" text-anchor="middle" class="box-sub">framework local names</text>
+  <rect x="1007" y="276" width="228" height="52" rx="2" class="white-box"/>
+  <text x="1121" y="301" text-anchor="middle" class="box-title">Debug and tests</text>
+  <text x="1121" y="322" text-anchor="middle" class="box-sub">replay, invariance CI</text>
+
+  <rect x="384" y="390" width="200" height="70" rx="5" class="user-box"/>
+  <text x="484" y="419" text-anchor="middle" class="box-title white-text">Mode</text>
+  <text x="484" y="442" text-anchor="middle" class="box-title white-text">selection</text>
+  <rect x="614" y="390" width="200" height="70" rx="5" class="user-box"/>
+  <text x="714" y="419" text-anchor="middle" class="box-title white-text">Capability</text>
+  <text x="714" y="442" text-anchor="middle" class="box-title white-text">query</text>
+  <rect x="844" y="390" width="200" height="70" rx="5" class="user-box"/>
+  <text x="944" y="419" text-anchor="middle" class="box-title white-text">Fallback</text>
+  <text x="944" y="442" text-anchor="middle" class="box-title white-text">policy</text>
+  <rect x="1074" y="390" width="200" height="70" rx="5" class="user-box"/>
+  <text x="1174" y="419" text-anchor="middle" class="box-title white-text">Audit</text>
+  <text x="1174" y="442" text-anchor="middle" class="box-title white-text">harness</text>
+
+  <rect x="384" y="506" width="282" height="58" rx="5" class="runtime-box"/>
+  <text x="525" y="541" text-anchor="middle" class="box-title white-text">Rollout engine</text>
+  <rect x="690" y="506" width="250" height="58" rx="5" class="runtime-box"/>
+  <text x="815" y="541" text-anchor="middle" class="box-title white-text">Data buffer</text>
+  <rect x="964" y="506" width="312" height="58" rx="5" class="runtime-box"/>
+  <text x="1120" y="541" text-anchor="middle" class="box-title white-text">Training engine</text>
+  <rect x="410" y="578" width="405" height="36" rx="2" class="white-box"/>
+  <text x="612" y="602" text-anchor="middle" class="box-title">tokens, old logp, metadata</text>
+  <rect x="845" y="578" width="405" height="36" rx="2" class="white-box"/>
+  <text x="1048" y="602" text-anchor="middle" class="box-title">hidden states, target ids, masks</text>
+
+  <rect x="384" y="638" width="892" height="86" rx="5" class="adapter-shell"/>
+  <text x="830" y="664" text-anchor="middle" class="box-title">RL-Kernel Adapter Embedded in Framework</text>
+  <rect x="412" y="676" width="158" height="36" rx="2" class="white-box"/>
+  <text x="491" y="700" text-anchor="middle" class="box-title">standard</text>
+  <rect x="590" y="676" width="158" height="36" rx="2" class="white-box"/>
+  <text x="669" y="700" text-anchor="middle" class="box-title">ScoreArtifact</text>
+  <rect x="768" y="676" width="158" height="36" rx="2" class="white-box"/>
+  <text x="847" y="700" text-anchor="middle" class="box-title">operators</text>
+  <rect x="946" y="676" width="158" height="36" rx="2" class="white-box"/>
+  <text x="1025" y="700" text-anchor="middle" class="box-title">support</text>
+  <rect x="1124" y="676" width="122" height="36" rx="2" class="white-box"/>
+  <text x="1185" y="700" text-anchor="middle" class="box-title">gate</text>
+
+  <rect x="520" y="766" width="620" height="52" rx="4" fill="#ffffff" stroke="#2674d9" stroke-width="3"/>
+  <text x="830" y="789" text-anchor="middle" class="box-title">Non-intrusive Adapter Boundary</text>
+  <text x="830" y="809" text-anchor="middle" class="box-sub">lazy import rl_engine public APIs, delegate reusable semantics</text>
+
+  <rect x="184" y="838" width="1232" height="232" rx="5" class="kernel-domain"/>
+  <text x="204" y="880" class="domain-title">RL-Kernel Native Alignment Domain (Core)</text>
+
+  <text x="830" y="864" text-anchor="middle" class="box-title">Alignment Contract Layer</text>
+  <rect x="334" y="886" width="176" height="48" rx="2" class="kernel-box"/>
+  <text x="422" y="907" text-anchor="middle" class="box-title">A0 to A5</text>
+  <text x="422" y="925" text-anchor="middle" class="box-sub">alignment standard</text>
+  <rect x="530" y="886" width="176" height="48" rx="2" class="kernel-box"/>
+  <text x="618" y="907" text-anchor="middle" class="box-title">ScoreArtifact</text>
+  <text x="618" y="925" text-anchor="middle" class="box-sub">schema</text>
+  <rect x="726" y="886" width="176" height="48" rx="2" class="kernel-box"/>
+  <text x="814" y="907" text-anchor="middle" class="box-title">Comparison</text>
+  <text x="814" y="925" text-anchor="middle" class="box-sub">tolerance</text>
+  <rect x="922" y="886" width="176" height="48" rx="2" class="kernel-box"/>
+  <text x="1010" y="907" text-anchor="middle" class="box-title">Operators</text>
+  <text x="1010" y="925" text-anchor="middle" class="box-sub">reference, admission</text>
+  <rect x="1118" y="886" width="176" height="48" rx="2" class="kernel-box"/>
+  <text x="1206" y="907" text-anchor="middle" class="box-title">Backend</text>
+  <text x="1206" y="925" text-anchor="middle" class="box-sub">support descriptors</text>
+
+  <text x="830" y="963" text-anchor="middle" class="box-title">Reusable Support Layer</text>
+  <rect x="398" y="982" width="230" height="42" rx="2" class="kernel-box"/>
+  <text x="513" y="1008" text-anchor="middle" class="box-title">tolerance fingerprints</text>
+  <rect x="685" y="982" width="230" height="42" rx="2" class="kernel-box"/>
+  <text x="800" y="1008" text-anchor="middle" class="box-title">reference operators</text>
+  <rect x="972" y="982" width="230" height="42" rx="2" class="kernel-box"/>
+  <text x="1087" y="1008" text-anchor="middle" class="box-title">strict admission rules</text>
+
+  <rect x="354" y="1038" width="892" height="54" rx="4" class="infra-shell"/>
+  <text x="800" y="1061" text-anchor="middle" class="box-title">Hardware Backends and Runtime Infra</text>
+  <text x="800" y="1082" text-anchor="middle" class="box-sub">CUDA, ROCm, Ascend, NCCL collectives, HBM workspace, runtime metadata</text>
+
+  <line x1="830" y1="348" x2="830" y2="390" class="arrow"/>
+  <line x1="830" y1="460" x2="830" y2="506" class="arrow"/>
+  <line x1="830" y1="614" x2="830" y2="638" class="arrow"/>
+  <line x1="830" y1="724" x2="830" y2="766" class="arrow"/>
+  <line x1="830" y1="818" x2="830" y2="838" class="arrow"/>
+</svg>
