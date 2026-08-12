@@ -9,6 +9,11 @@ import pytest
 import torch
 
 from rl_engine.kernels.gtest.operator_inputs import make_operator_inputs, operator_shape_name
+from rl_engine.kernels.gtest.operator_specs import (
+    make_candidate,
+    make_operator_case,
+    operator_names,
+)
 
 
 def _args(**overrides):
@@ -25,6 +30,7 @@ def _args(**overrides):
         "n_dim": 32,
         "theta": 1.0e6,
         "eps": 1.0e-6,
+        "arch_key": None,
     }
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -79,6 +85,18 @@ def test_random_logp_inputs_are_seeded():
 
     assert torch.equal(first["logits"], second["logits"])
     assert torch.equal(first["token_ids"], second["token_ids"])
+
+
+def test_cp_attention_operator_spec_registers_backward_grad_inputs():
+    args = _args(op="cp_attention", input_mode="constant", batch=1, seq=2)
+
+    assert "cp_attention" in operator_names()
+    case = make_operator_case(args, torch.float32, torch.device("cpu"))
+    candidate = make_candidate(argparse.Namespace(**{**vars(args), "candidate": "pytorch"}))
+
+    assert case.op_class == "attention"
+    assert case.grad_input_names == ("q", "k", "v")
+    assert candidate.name == "pytorch-cp_attention"
 
 
 def test_constant_linear_logp_inputs_match_operator_contract():

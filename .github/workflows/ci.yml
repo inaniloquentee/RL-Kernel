@@ -76,6 +76,9 @@ jobs:
         run: |
           python -m pytest tests/test_kv_cache_attention.py -v -k "not large and not gpu"
 
+      - name: Run WS2 Attention Contract Tests (CPU-safe)
+        run: python -m pytest tests/test_attention_contract.py -v
+
   docs:
     runs-on: ubuntu-latest
     steps:
