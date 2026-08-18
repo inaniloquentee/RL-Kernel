@@ -14,7 +14,7 @@ tags:
 
 We are developing operator-level train-inference consistency for Qwen3 Dense models, following the WS1 -> WS2 split introduced in RL-Kernel #83. The next step is to extend the same methodology to Flash MoE models such as `DeepSeek-V4-Flash-0731`.
 
-A more detailed v4 roadmap will be published later as an RL-Kernel GitHub issue.
+A detailed module-oriented roadmap is maintained in the [DeepSeek V4 Flash MoE operator consistency roadmap](../design/deepseek-v4-flash-moe-operator-consistency-roadmap-zh.md). It tracks the framework contracts already supplied by Miles separately from the remaining KLR operator work.
 
 In Dense models, the main consistency surfaces are usually continuous numeric paths such as matmul, attention, and logprob. MoE makes the problem more discrete. A tiny router difference can change the selected top-k expert. A different token order, padding choice, or all2all layout can change the expert input tensor. A different floating-point reduction order in weighted combine can make `dlogp` drift across batch, pack, TP, CP, and EP configurations.
 
